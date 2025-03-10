@@ -1,6 +1,9 @@
+use byteorder::{BigEndian, ReadBytesExt};
+use chrono::{DateTime, TimeZone, Utc};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::io::Cursor;
 use std::ops::Add;
 
 pub mod error;
@@ -24,6 +27,60 @@ pub struct Diff<A> {
     pub ops: Vec<Op<A>>,
     pub len_change: isize,
     drop_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Update<A> {
+    pub id: A,
+    pub timestamp: DateTime<Utc>,
+    pub diff: Diff<A>,
+}
+
+impl<A> Update<A> {
+    pub fn new(id: A, timestamp: DateTime<Utc>, diff: Diff<A>) -> Self {
+        Self {
+            id,
+            timestamp,
+            diff,
+        }
+    }
+}
+
+impl Update<u64> {
+    /// Convenience method for getting a sequence of bytes for an update.
+    ///
+    /// Uses big-endian encoding for the ID and timestamp (in seconds). The standard diff encoding is used,
+    /// except that an empty diff is represented by zero bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buffer = Vec::with_capacity(12);
+        buffer.extend_from_slice(&self.id.to_be_bytes());
+        buffer.extend_from_slice(&(self.timestamp.timestamp() as u32).to_be_bytes());
+        // We are writing to a buffer, so should be fine to unwrap.
+        io::write_diff(&mut buffer, &self.diff).unwrap();
+        buffer
+    }
+
+    pub fn from_bytes<B: AsRef<[u8]>>(input: B) -> Result<Self, error::DecodingError> {
+        let mut cursor = Cursor::new(input);
+
+        let id = cursor
+            .read_u64::<BigEndian>()
+            .map_err(|_| error::DecodingError::InvalidIndex(cursor.position()))?;
+
+        let timestamp = cursor
+            .read_u32::<BigEndian>()
+            .ok()
+            .and_then(|timestamp_s| Utc.timestamp_opt(timestamp_s as i64, 0).single())
+            .ok_or_else(|| error::DecodingError::InvalidTimestamp(cursor.position()))?;
+
+        let diff = io::read_diff(cursor)?;
+
+        Ok(Self {
+            id,
+            timestamp,
+            diff,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +164,28 @@ impl<A: Clone> Diff<A> {
         } else {
             Err(error::ApplicationError::UnexpectedData(index))
         }
+    }
+}
+
+impl<A> Diff<A> {
+    /// Determine whether this diff does nothing.
+    ///
+    /// If a source length is provided, checks whether the diff is valid for this source.
+    pub fn is_empty(&self, source_len: Option<usize>) -> bool {
+        self.ops.len() == 1
+            && matches!(self.ops[0], Op::Take(len) if source_len.filter(|source_len| *source_len != len).is_none())
+    }
+
+    /// Determine the source length that is required for this diff to be valid.
+    pub fn expected_source_len(&self) -> usize {
+        self.ops
+            .iter()
+            .map(|op| match op {
+                Op::Take(len) => *len,
+                Op::Drop(len) => *len,
+                Op::Insert(_) => 0,
+            })
+            .sum()
     }
 }
 

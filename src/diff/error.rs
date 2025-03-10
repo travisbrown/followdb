@@ -23,28 +23,18 @@ impl ApplicationError {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum DecodingError {
-    #[error("Invalid count")]
-    InvalidCount(u64),
-    #[error("Invalid value")]
-    InvalidValue(u64),
-    #[error("Invalid insert count")]
-    InvalidInsertCount(u64),
-    #[error("Invalid insert value")]
-    InvalidInsertValue(u64),
-    #[error("Unexpected data")]
-    UnexpectedData(u64),
-}
-
-impl DecodingError {
-    pub fn position(&self) -> u64 {
-        match self {
-            Self::InvalidCount(position) => *position,
-            Self::InvalidValue(position) => *position,
-            Self::InvalidInsertCount(position) => *position,
-            Self::InvalidInsertValue(position) => *position,
-            Self::UnexpectedData(position) => *position,
-        }
-    }
+    #[error("Count error")]
+    Count(std::io::Error),
+    #[error("Value error")]
+    Value(std::io::Error),
+    #[error("Insert count error")]
+    InsertCount(std::io::Error),
+    #[error("Insert value error")]
+    InsertValue(std::io::Error),
+    #[error("Index error")]
+    Index(std::io::Error),
+    #[error("Timestamp error")]
+    Timestamp(std::io::Error),
 }

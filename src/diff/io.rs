@@ -11,70 +11,58 @@
 use byteorder::{BigEndian, ReadBytesExt};
 use integer_encoding::{VarInt, VarIntReader, VarIntWriter};
 use std::cmp::Ordering;
-use std::io::{Cursor, Write};
+use std::io::{Read, Write};
 
 use super::error::DecodingError;
 
-pub fn read_diff<T: AsRef<[u8]>, A: VarInt>(input: T) -> Result<super::Diff<A>, DecodingError> {
-    let mut cursor = Cursor::new(input);
+pub trait ReadExt: Read {
+    fn read_diff<A: VarInt>(&mut self) -> Result<super::Diff<A>, DecodingError> {
+        let count = self.read_u32::<BigEndian>().map_err(DecodingError::Count)?;
 
-    let count = cursor
-        .read_u32::<BigEndian>()
-        .map_err(|_| DecodingError::InvalidCount(cursor.position()))?;
+        let mut ops = Vec::with_capacity(count as usize);
+        let mut drop_count = 0;
+        let mut len_change = 0;
 
-    let mut ops = Vec::with_capacity(count as usize);
-    let mut drop_count = 0;
-    let mut len_change = 0;
+        for _ in 0..count {
+            let next = self.read_i32::<BigEndian>().map_err(DecodingError::Value)?;
 
-    for _ in 0..count {
-        let next = cursor
-            .read_i32::<BigEndian>()
-            .map_err(|_| DecodingError::InvalidValue(cursor.position()))?;
-
-        match next.cmp(&0) {
-            Ordering::Greater => {
-                ops.push(super::Op::Take(next as usize));
-            }
-            Ordering::Less => {
-                ops.push(super::Op::Drop((-next) as usize));
-                drop_count += 1;
-                len_change += next as isize;
-            }
-            Ordering::Equal => {
-                let insert_count = cursor
-                    .read_u32::<BigEndian>()
-                    .map_err(|_| DecodingError::InvalidInsertCount(cursor.position()))?;
-
-                let mut values = Vec::with_capacity(insert_count as usize);
-
-                for _ in 0..insert_count {
-                    values.push(
-                        cursor
-                            .read_varint()
-                            .map_err(|_| DecodingError::InvalidInsertValue(cursor.position()))?,
-                    );
+            match next.cmp(&0) {
+                Ordering::Greater => {
+                    ops.push(super::Op::Take(next as usize));
                 }
+                Ordering::Less => {
+                    ops.push(super::Op::Drop((-next) as usize));
+                    drop_count += 1;
+                    len_change += next as isize;
+                }
+                Ordering::Equal => {
+                    let insert_count = self
+                        .read_u32::<BigEndian>()
+                        .map_err(DecodingError::InsertCount)?;
 
-                ops.push(super::Op::Insert(values));
-                len_change += insert_count as isize;
+                    let mut values = Vec::with_capacity(insert_count as usize);
+
+                    for _ in 0..insert_count {
+                        values.push(self.read_varint().map_err(DecodingError::Value)?);
+                    }
+
+                    ops.push(super::Op::Insert(values));
+                    len_change += insert_count as isize;
+                }
             }
         }
-    }
 
-    if cursor.position() == cursor.get_ref().as_ref().len() as u64 {
         Ok(super::Diff {
             ops,
             len_change,
             drop_count,
         })
-    } else {
-        Err(DecodingError::UnexpectedData(cursor.position()))
     }
 }
 
 pub fn write_diff<W: Write, A: VarInt>(
-    diff: &super::Diff<A>,
     writer: &mut W,
+    diff: &super::Diff<A>,
 ) -> Result<(), std::io::Error> {
     writer.write_all(&(diff.ops.len() as u32).to_be_bytes())?;
     for op in &diff.ops {
