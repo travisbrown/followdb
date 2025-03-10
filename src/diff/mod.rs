@@ -1,6 +1,8 @@
+use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::io::Cursor;
 use std::ops::Add;
 
 pub mod error;
@@ -24,6 +26,59 @@ pub struct Diff<A> {
     pub ops: Vec<Op<A>>,
     pub len_change: isize,
     drop_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Update<A> {
+    pub timestamp: DateTime<Utc>,
+    pub id: A,
+    pub diff: Diff<A>,
+}
+
+impl<A: Ord> PartialOrd for Update<A> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match self
+            .timestamp
+            .cmp(&other.timestamp)
+            .then(self.id.cmp(&other.id))
+        {
+            Ordering::Equal => None,
+            other => Some(other),
+        }
+    }
+}
+
+impl<A> Update<A> {
+    pub fn new(timestamp: DateTime<Utc>, id: A, diff: Diff<A>) -> Self {
+        Self {
+            timestamp,
+            id,
+            diff,
+        }
+    }
+}
+
+impl Update<u64> {
+    /// Convenience method for reading an update from a byte sequence.
+    ///
+    /// Uses big-endian encoding for the ID and timestamp (in seconds).
+    pub fn from_bytes<B: AsRef<[u8]>>(input: B) -> Result<Self, error::DecodingError> {
+        let mut cursor = Cursor::new(input);
+
+        io::ReadExt::read_update(&mut cursor)
+    }
+
+    /// Convenience method for getting a sequence of bytes for an update.
+    ///
+    /// Uses big-endian encoding for the ID and timestamp (in seconds).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buffer = Vec::with_capacity(12);
+
+        // We are writing to a buffer, so should be fine to unwrap.
+        io::WriteExt::write_update(&mut buffer, self).unwrap();
+
+        buffer
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,7 +122,7 @@ impl<A: Clone + Eq + Hash> Add<&DiffValues<A>> for &DiffValues<A> {
 }
 
 impl<A: Clone> Diff<A> {
-    pub fn new(values: Vec<A>) -> Self {
+    pub fn init(values: Vec<A>) -> Self {
         let len = values.len();
         Self {
             ops: vec![Op::Insert(values)],
@@ -107,6 +162,28 @@ impl<A: Clone> Diff<A> {
         } else {
             Err(error::ApplicationError::UnexpectedData(index))
         }
+    }
+}
+
+impl<A> Diff<A> {
+    /// Determine whether this diff does nothing.
+    ///
+    /// If a source length is provided, checks whether the diff is valid for this source.
+    pub fn is_empty(&self, source_len: Option<usize>) -> bool {
+        self.ops.len() == 1
+            && matches!(self.ops[0], Op::Take(len) if source_len.filter(|source_len| *source_len != len).is_none())
+    }
+
+    /// Determine the source length that is required for this diff to be valid.
+    pub fn expected_source_len(&self) -> usize {
+        self.ops
+            .iter()
+            .map(|op| match op {
+                Op::Take(len) => *len,
+                Op::Drop(len) => *len,
+                Op::Insert(_) => 0,
+            })
+            .sum()
     }
 }
 
@@ -478,17 +555,16 @@ impl<A: Clone + Eq + Hash + Default> Diff<A> {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        Diff, Op, Update,
+        io::{ReadExt, WriteExt},
+    };
+    use crate::diff::DiffValues;
+    use chrono::SubsecRound;
     use quickcheck::{Arbitrary, quickcheck};
     use rand::{rng, seq::SliceRandom};
     use std::collections::HashSet;
     use std::hash::Hash;
-
-    use crate::diff::DiffValues;
-
-    use super::{
-        Diff, Op,
-        io::{read_diff, write_diff},
-    };
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct DistinctVec<A>(Vec<A>);
@@ -517,9 +593,9 @@ mod tests {
     }
 
     quickcheck! {
-        fn update_in_place_new(source: DistinctVec<u64>) -> bool {
+        fn update_in_place_init(source: DistinctVec<u64>) -> bool {
             let mut new_source = vec![];
-            let diff = Diff::new(source.0.clone());
+            let diff = Diff::init(source.0.clone());
 
             diff.update_in_place(&mut new_source).unwrap();
 
@@ -567,9 +643,9 @@ mod tests {
             let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
             let mut buffer = vec![];
-            write_diff(&diff, &mut buffer).unwrap();
+            buffer.write_diff(&diff).unwrap();
 
-            let new_diff: Diff<u64> = read_diff(buffer.as_slice()).unwrap();
+            let new_diff: Diff<u64> = buffer.as_slice().read_diff().unwrap();
             let computed_target = new_diff.update(&source.0).unwrap();
 
             let mut source_copy = source.0.clone();
@@ -587,15 +663,34 @@ mod tests {
             let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
             let mut buffer = vec![];
-            write_diff(&diff, &mut buffer).unwrap();
+            buffer.write_diff(&diff).unwrap();
 
-            let new_diff: Diff<u64> = read_diff(buffer.as_slice()).unwrap();
+            let new_diff: Diff<u64> = buffer.as_slice().read_diff().unwrap();
             let computed_target = new_diff.update(&source.0).unwrap();
 
             let mut source_copy = source.0.clone();
             new_diff.clone().update_in_place(&mut source_copy).unwrap();
 
             new_diff == diff && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
+        }
+    }
+
+    quickcheck! {
+        fn round_trip_distinct_updates_via_bytes(
+            id: u64,
+            source: DistinctVec<u64>,
+            target: DistinctVec<u64>
+        ) -> bool {
+            let diff = Diff::compute(&source.0, &target.0).unwrap();
+            let timestamp = chrono::Utc::now().trunc_subsecs(0);
+            let update = Update::new(timestamp, id, diff);
+
+            let mut buffer = vec![];
+            buffer.write_update(&update).unwrap();
+
+            let read_update: Update<u64> = buffer.as_slice().read_update().unwrap();
+
+            read_update == update
         }
     }
 
@@ -710,11 +805,11 @@ mod tests {
         assert_eq!(diff_1.ops.len(), 404);
 
         let mut written_diff_1_bytes = vec![];
-        write_diff(&diff_1, &mut written_diff_1_bytes).unwrap();
+        written_diff_1_bytes.write_diff(&diff_1).unwrap();
 
         assert_eq!(written_diff_1_bytes, diff_1_bytes);
 
-        let read_diff_1 = read_diff(diff_1_bytes).unwrap();
+        let read_diff_1 = diff_1_bytes.as_slice().read_diff().unwrap();
 
         assert_eq!(read_diff_1, diff_1);
     }
