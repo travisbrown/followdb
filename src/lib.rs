@@ -1,2 +1,2 @@
-pub mod compression;
 pub mod diff;
+pub mod history;

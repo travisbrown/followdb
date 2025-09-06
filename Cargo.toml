@@ -10,11 +10,11 @@ readme = "README.md"
 
 [dependencies]
 byteorder = "1"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 integer-encoding = "4"
 lis = "1"
+serde = { version = "1", features = ["derive"] }
 thiserror = "2"
-zstd = "0.13"
 
 [dev-dependencies]
 quickcheck = "1"
