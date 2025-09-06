@@ -6,6 +6,10 @@
 //! representing the number of inserted values, followed by the values themselves, using a varint
 //! encoding.
 //!
+//! The update representation begins with the timestamp (as a `u32` value, using the big-endian
+//! encoding for the sake of sorting) and account ID, and then continues with the diff
+//! representation described above.
+//!
 //! The big-endian encoding is used for all `u32` and `i32` numbers.
 
 use byteorder::{BigEndian, ReadBytesExt};
