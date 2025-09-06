@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod io;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Action {
     #[serde(rename = "+")]
@@ -75,7 +77,6 @@ impl<A: Copy + Eq + Ord> History<A> {
                         None,
                         Update::new(*timestamp, *id, Diff::init(ids.clone())),
                     )))
-                    .into_iter()
                     // Safe because we confirm above that `snapshots` is non-empty.
                     .chain(snapshots.windows(2).map(|window| match window {
                         [
