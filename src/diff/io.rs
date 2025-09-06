@@ -21,6 +21,10 @@ use std::io::{Read, Write};
 use super::error::DecodingError;
 
 pub trait ReadExt: Read + VarIntReader {
+    /// Read the binary representation of an update.
+    ///
+    /// Note that this function fixes the ID to `u64`. This is because we want to be able to sort
+    /// the resulting byte strings, which requires a fixed-width big-endian representation.
     fn read_update(&mut self) -> Result<super::Update<u64>, DecodingError> {
         let timestamp = self
             .read_u32::<BigEndian>()
@@ -83,6 +87,10 @@ pub trait ReadExt: Read + VarIntReader {
 impl<R: Read + VarIntReader> ReadExt for R {}
 
 pub trait WriteExt: Write + VarIntWriter {
+    /// Write the binary representation of an update.
+    ///
+    /// Note that this function fixes the ID to `u64`. This is because we want to be able to sort
+    /// the resulting byte strings, which requires a fixed-width big-endian representation.
     fn write_update(&mut self, update: &super::Update<u64>) -> Result<(), std::io::Error> {
         self.write_all(&(update.timestamp.timestamp() as u32).to_be_bytes())?;
         self.write_all(&update.id.to_be_bytes())?;
