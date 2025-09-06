@@ -1,10 +1,12 @@
+//! Write a sequence of `u64` value using the varint encoding, optionally with ZSTD compression.
+
 use integer_encoding::{VarIntReader, VarIntWriter};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use zstd::stream::{read::Decoder, write::Encoder};
 
-pub enum IdReader<R> {
+enum IdReader<R> {
     Reading { underlying: R },
     Failed { error: Option<std::io::Error> },
 }
