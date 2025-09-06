@@ -67,31 +67,36 @@ impl<A: Copy + Eq + Ord> History<A> {
         &self,
     ) -> impl Iterator<Item = Result<(Option<DateTime<Utc>>, Update<A>), crate::diff::error::InputError>>
     {
-        self.0.iter().flat_map(|(id, snapshots)| {
-            snapshots
-                .first()
-                .map(|Snapshot { timestamp, ids }| {
-                    Ok((None, Update::new(*timestamp, *id, Diff::init(ids.clone()))))
+        self.0
+            .iter()
+            .filter_map(|(id, snapshots)| {
+                snapshots.first().map(|Snapshot { timestamp, ids }| {
+                    std::iter::once(Ok((
+                        None,
+                        Update::new(*timestamp, *id, Diff::init(ids.clone())),
+                    )))
+                    .into_iter()
+                    // Safe because we confirm above that `snapshots` is non-empty.
+                    .chain(snapshots.windows(2).map(|window| match window {
+                        [
+                            Snapshot {
+                                timestamp: a_timestamp,
+                                ids: a_ids,
+                            },
+                            Snapshot {
+                                timestamp: b_timestamp,
+                                ids: b_ids,
+                            },
+                        ] => Ok((
+                            Some(*a_timestamp),
+                            Update::new(*b_timestamp, *id, Diff::compute(a_ids, b_ids)?),
+                        )),
+                        // Safe because of the contract of `windows`.
+                        _ => panic!("Invalid snapshot window"),
+                    }))
                 })
-                .into_iter()
-                .chain(snapshots.windows(2).map(|window| match window {
-                    [
-                        Snapshot {
-                            timestamp: a_timestamp,
-                            ids: a_ids,
-                        },
-                        Snapshot {
-                            timestamp: b_timestamp,
-                            ids: b_ids,
-                        },
-                    ] => Ok((
-                        Some(*a_timestamp),
-                        Update::new(*b_timestamp, *id, Diff::compute(a_ids, b_ids)?),
-                    )),
-
-                    _ => panic!("Unexpected snapshot window"),
-                }))
-        })
+            })
+            .flatten()
     }
 
     pub fn changes(&self) -> Vec<Change<A>> {
