@@ -20,6 +20,8 @@ pub enum Op<A> {
 /// The diff implementation is optimized for the case where the order of elements is mostly
 /// unchanged (Twitter follower lists, for example), but will produce correct results in the
 /// general case.
+///
+/// Note that there will always be at least one operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diff<A> {
     pub ops: Vec<Op<A>>,

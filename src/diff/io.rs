@@ -1,16 +1,21 @@
-//! Convert diffs to a binary representation.
+//! Convert diffs and updates to a binary representation.
 //!
-//! The representation begins with a `u32` value indicating the number of operations in the diff.
-//! The `Take` and `Drop` operations are represented by a single positive or negative non-zero
-//! `i32` number respectively. The `Insert` operation begins with a zero, followed by a `u32`
-//! representing the number of inserted values, followed by the values themselves, using a varint
-//! encoding.
+//! The diff representation begins with a `u32` value indicating the number of operations in the
+//! diff. The `Take` and `Drop` operations are represented by a single positive or negative
+//! non-zero `i32` number respectively. The `Insert` operation begins with a zero, followed by a
+//! `u32` representing the number of inserted values, followed by the values themselves, using a
+//! varint encoding.
 //!
 //! The update representation begins with the timestamp (as a `u32` value, using the big-endian
 //! encoding for the sake of sorting) and account ID, and then continues with the diff
 //! representation described above.
 //!
 //! The big-endian encoding is used for all `u32` and `i32` numbers.
+//!
+//! Note that the update functions are not generic in the ID type, but are only implemented for
+//! `u64`. This is because we want to be able to sort the resulting byte strings, which requires a
+//! fixed-width big-endian representation. It would be possible to implement these functions for
+//! other integer types, but that is not done here (yet).
 
 use byteorder::{BigEndian, ReadBytesExt};
 use chrono::{TimeZone, Utc};
@@ -23,8 +28,7 @@ use super::error::DecodingError;
 pub trait ReadExt: Read + VarIntReader {
     /// Read the binary representation of an update.
     ///
-    /// Note that this function fixes the ID to `u64`. This is because we want to be able to sort
-    /// the resulting byte strings, which requires a fixed-width big-endian representation.
+    /// Note that this function fixes the ID to `u64`.
     fn read_update(&mut self) -> Result<super::Update<u64>, DecodingError> {
         let timestamp = self
             .read_u32::<BigEndian>()
@@ -89,8 +93,7 @@ impl<R: Read + VarIntReader> ReadExt for R {}
 pub trait WriteExt: Write + VarIntWriter {
     /// Write the binary representation of an update.
     ///
-    /// Note that this function fixes the ID to `u64`. This is because we want to be able to sort
-    /// the resulting byte strings, which requires a fixed-width big-endian representation.
+    /// Note that this function fixes the ID to `u64`.
     fn write_update(&mut self, update: &super::Update<u64>) -> Result<(), std::io::Error> {
         self.write_all(&(update.timestamp.timestamp() as u32).to_be_bytes())?;
         self.write_all(&update.id.to_be_bytes())?;
