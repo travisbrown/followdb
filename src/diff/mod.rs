@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 use std::ops::Add;
 
@@ -82,22 +81,22 @@ impl Update<u64> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiffValues<A: Eq + Hash> {
-    pub additions: HashSet<A>,
-    pub removals: HashSet<A>,
+pub struct DiffValues<A> {
+    pub additions: BTreeSet<A>,
+    pub removals: BTreeSet<A>,
 }
 
-impl<A: Eq + Hash> Default for DiffValues<A> {
+impl<A: Eq> Default for DiffValues<A> {
     fn default() -> Self {
         Self {
-            additions: HashSet::new(),
-            removals: HashSet::new(),
+            additions: BTreeSet::new(),
+            removals: BTreeSet::new(),
         }
     }
 }
 
-impl<A: Eq + Hash> DiffValues<A> {
-    pub fn moved(&self) -> HashSet<&A> {
+impl<A: Eq + Ord> DiffValues<A> {
+    pub fn moved(&self) -> BTreeSet<&A> {
         self.additions.intersection(&self.removals).collect()
     }
 
@@ -110,7 +109,7 @@ impl<A: Eq + Hash> DiffValues<A> {
     }
 }
 
-impl<A: Clone + Eq + Hash> Add<&DiffValues<A>> for &DiffValues<A> {
+impl<A: Clone + Eq + Ord> Add<&DiffValues<A>> for &DiffValues<A> {
     type Output = DiffValues<A>;
 
     fn add(self, rhs: &DiffValues<A>) -> Self::Output {
@@ -282,7 +281,7 @@ impl<A: Clone + Default> Diff<A> {
     }
 }
 
-impl<A: Clone + Eq + Hash> Diff<A> {
+impl<A: Clone + Eq + Ord> Diff<A> {
     pub fn values(&self, source: &[A]) -> Result<DiffValues<A>, error::ApplicationError> {
         let mut diff_values = DiffValues::default();
         let mut index = 0;
@@ -368,7 +367,7 @@ impl<A: Clone + Eq + Hash> Diff<A> {
             target = &target[0..target.len() - shared_tail_len];
         }
 
-        let mut target_indices = HashMap::new();
+        let mut target_indices = BTreeMap::new();
 
         for (index, value) in target.iter().enumerate() {
             if let Some(previous_index) = target_indices.insert(value, index) {
@@ -462,7 +461,7 @@ impl<A: Clone + Eq + Hash> Diff<A> {
     }
 }
 
-impl<A: Clone + Eq + Hash + Default> Diff<A> {
+impl<A: Clone + Default + Eq + Ord> Diff<A> {
     pub fn update_in_place_with_values(
         self,
         source: &mut Vec<A>,
@@ -563,15 +562,14 @@ mod tests {
     use chrono::SubsecRound;
     use quickcheck::{Arbitrary, quickcheck};
     use rand::{rng, seq::SliceRandom};
-    use std::collections::HashSet;
-    use std::hash::Hash;
+    use std::collections::BTreeSet;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct DistinctVec<A>(Vec<A>);
 
-    impl<A: Arbitrary + Clone + Eq + Hash + 'static> Arbitrary for DistinctVec<A> {
+    impl<A: Arbitrary + Clone + Eq + Ord + 'static> Arbitrary for DistinctVec<A> {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            let base = HashSet::<A>::arbitrary(g);
+            let base = BTreeSet::<A>::arbitrary(g);
             let mut output = base.into_iter().collect::<Vec<_>>();
             output.shuffle(&mut rng());
 
@@ -582,9 +580,9 @@ mod tests {
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct SortedDistinctVec<A>(Vec<A>);
 
-    impl<A: Arbitrary + Clone + Ord + Hash + 'static> Arbitrary for SortedDistinctVec<A> {
+    impl<A: Arbitrary + Clone + Ord + Ord + 'static> Arbitrary for SortedDistinctVec<A> {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            let base = HashSet::<A>::arbitrary(g);
+            let base = BTreeSet::<A>::arbitrary(g);
             let mut output = base.into_iter().collect::<Vec<_>>();
             output.sort();
 
@@ -718,8 +716,8 @@ mod tests {
         assert_eq!(diff, expected_diff);
 
         let expected_diff_values = DiffValues {
-            additions: HashSet::from_iter(["X", "M", "P", "Q"]),
-            removals: HashSet::from_iter(["A", "B", "E", "J", "K"]),
+            additions: BTreeSet::from_iter(["X", "M", "P", "Q"]),
+            removals: BTreeSet::from_iter(["A", "B", "E", "J", "K"]),
         };
 
         let diff_values = diff.values(&source).unwrap();

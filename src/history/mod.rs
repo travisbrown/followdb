@@ -13,9 +13,9 @@ pub enum Action {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct Change {
-    pub source_id: u64,
-    pub target_id: u64,
+pub struct Change<A> {
+    pub source_id: A,
+    pub target_id: A,
     pub action: Action,
     #[serde(with = "chrono::serde::ts_seconds")]
     pub after: DateTime<Utc>,
@@ -24,26 +24,28 @@ pub struct Change {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Snapshot {
+pub struct Snapshot<A> {
     pub timestamp: DateTime<Utc>,
-    pub ids: Vec<u64>,
+    pub ids: Vec<A>,
 }
 
-impl Snapshot {
-    pub fn new(timestamp: DateTime<Utc>, ids: Vec<u64>) -> Self {
+impl<A> Snapshot<A> {
+    pub fn new(timestamp: DateTime<Utc>, ids: Vec<A>) -> Self {
         Self { timestamp, ids }
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct History(BTreeMap<u64, Vec<Snapshot>>);
+pub struct History<A>(BTreeMap<A, Vec<Snapshot<A>>>);
 
-impl History {
-    pub fn new(values: BTreeMap<u64, Vec<Snapshot>>) -> Self {
+impl<A> History<A> {
+    pub fn new(values: BTreeMap<A, Vec<Snapshot<A>>>) -> Self {
         Self(values)
     }
+}
 
-    pub fn user_ids(&self) -> impl Iterator<Item = u64> {
+impl<A: Copy> History<A> {
+    pub fn account_ids(&self) -> impl Iterator<Item = A> {
         self.0.iter().flat_map(|(id, snapshots)| {
             std::iter::once(*id).chain(
                 snapshots
@@ -53,15 +55,17 @@ impl History {
         })
     }
 
-    pub fn values(&self) -> impl Iterator<Item = (u64, &[Snapshot])> {
+    pub fn values(&self) -> impl Iterator<Item = (A, &[Snapshot<A>])> {
         self.0
             .iter()
             .map(|(id, snapshots)| (*id, snapshots.as_slice()))
     }
+}
 
+impl<A: Copy + Eq + Ord> History<A> {
     pub fn updates(
         &self,
-    ) -> impl Iterator<Item = Result<(Option<DateTime<Utc>>, Update<u64>), crate::diff::error::InputError>>
+    ) -> impl Iterator<Item = Result<(Option<DateTime<Utc>>, Update<A>), crate::diff::error::InputError>>
     {
         self.0.iter().flat_map(|(id, snapshots)| {
             snapshots
@@ -90,8 +94,8 @@ impl History {
         })
     }
 
-    pub fn changes(&self) -> Vec<Change> {
-        let mut changes: Vec<Change> = self
+    pub fn changes(&self) -> Vec<Change<A>> {
+        let mut changes: Vec<Change<A>> = self
             .0
             .iter()
             .filter(|(_, snapshots)| snapshots.len() > 1)
