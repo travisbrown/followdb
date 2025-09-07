@@ -8,11 +8,26 @@ pub mod error;
 pub mod io;
 
 /// A single transformation operation.
+///
+/// Note that the values of `Take` and `Drop` should never be zero, and the sequence of inserted
+/// values should never be empty.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Op<A> {
     Take(usize),
     Drop(usize),
     Insert(Vec<A>),
+}
+
+impl<A> Op<A> {
+    /// Verify that the value is "non-empty".
+    ///
+    /// If false, then either a take or drop value is zero, or an insert sequence is empty.
+    pub fn validate(&self) -> bool {
+        match self {
+            Self::Take(value) | Self::Drop(value) => *value != 0,
+            Self::Insert(values) => !values.is_empty(),
+        }
+    }
 }
 
 /// The operations necessary to transform one list of distinct elements into another.
@@ -21,7 +36,8 @@ pub enum Op<A> {
 /// unchanged (Twitter follower lists, for example), but will produce correct results in the
 /// general case.
 ///
-/// Note that there will always be at least one operation.
+/// Note that there will be no operations if and only if both the source and target lists are
+/// empty.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diff<A> {
     pub ops: Vec<Op<A>>,
@@ -167,12 +183,24 @@ impl<A: Clone> Diff<A> {
 }
 
 impl<A> Diff<A> {
-    /// Determine whether this diff does nothing.
-    ///
-    /// If a source length is provided, checks whether the diff is valid for this source.
-    pub fn is_empty(&self, source_len: Option<usize>) -> bool {
-        self.ops.len() == 1
-            && matches!(self.ops[0], Op::Take(len) if source_len.filter(|source_len| *source_len != len).is_none())
+    /// Determine whether this diff makes no changes (does not check validity).
+    pub fn is_identity(&self) -> bool {
+        match self.ops.len() {
+            1 => matches!(self.ops[0], Op::Take(_)),
+            0 => true,
+            _ => false,
+        }
+    }
+
+    /// Verify that all operations are valid.
+    pub fn validate(&self) -> bool {
+        self.ops.iter().all(|op| op.validate())
+    }
+
+    /// Verify that all operations are valid and that the diff can be applied to a source of the
+    /// given length.
+    pub fn validate_for_source_len(&self, source_len: usize) -> bool {
+        self.validate() && self.expected_source_len() == source_len
     }
 
     /// Determine the source length that is required for this diff to be valid.
@@ -604,8 +632,18 @@ mod tests {
     }
 
     quickcheck! {
+        fn is_identity(source: DistinctVec<u64>) -> bool {
+            let diff = Diff::compute(&source.0, &source.0).unwrap();
+
+            diff.is_identity()
+        }
+    }
+
+    quickcheck! {
         fn round_trip_distinct(source: DistinctVec<u64>, target: DistinctVec<u64>) -> bool {
             let diff = Diff::compute(&source.0, &target.0).unwrap();
+
+            let is_valid = diff.validate();
 
             let len_change = diff.len_change;
             let expected_len_change = target.0.len() as isize - source.0.len() as isize;
@@ -615,7 +653,7 @@ mod tests {
             let mut source_copy = source.0.clone();
             diff.update_in_place(&mut source_copy).unwrap();
 
-            computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
+            is_valid && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
         }
     }
 
@@ -623,6 +661,8 @@ mod tests {
         fn round_trip_sorted_distinct(source: SortedDistinctVec<u64>, target: SortedDistinctVec<u64>) -> bool {
             let diff = Diff::compute(&source.0, &target.0).unwrap();
 
+            let is_valid = diff.validate();
+
             let len_change = diff.len_change;
             let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
@@ -631,7 +671,7 @@ mod tests {
             let mut source_copy = source.0.clone();
             diff.update_in_place(&mut source_copy).unwrap();
 
-            computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
+            is_valid && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
         }
     }
 
@@ -639,6 +679,8 @@ mod tests {
         fn round_trip_distinct_via_bytes(source: DistinctVec<u64>, target: DistinctVec<u64>) -> bool {
             let diff = Diff::compute(&source.0, &target.0).unwrap();
 
+            let is_valid = diff.validate();
+
             let len_change = diff.len_change;
             let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
@@ -651,7 +693,7 @@ mod tests {
             let mut source_copy = source.0.clone();
             new_diff.clone().update_in_place(&mut source_copy).unwrap();
 
-            new_diff == diff && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
+            is_valid && new_diff == diff && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
         }
     }
 
@@ -659,6 +701,8 @@ mod tests {
         fn round_trip_sorted_distinct_via_bytes(source: SortedDistinctVec<u64>, target: SortedDistinctVec<u64>) -> bool {
             let diff = Diff::compute(&source.0, &target.0).unwrap();
 
+            let is_valid = diff.validate();
+
             let len_change = diff.len_change;
             let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
@@ -671,7 +715,7 @@ mod tests {
             let mut source_copy = source.0.clone();
             new_diff.clone().update_in_place(&mut source_copy).unwrap();
 
-            new_diff == diff && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
+            is_valid && new_diff == diff && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
         }
     }
 
@@ -682,6 +726,9 @@ mod tests {
             target: DistinctVec<u64>
         ) -> bool {
             let diff = Diff::compute(&source.0, &target.0).unwrap();
+
+            let is_valid = diff.validate();
+
             let timestamp = chrono::Utc::now().trunc_subsecs(0);
             let update = Update::new(timestamp, id, diff);
 
@@ -690,7 +737,7 @@ mod tests {
 
             let read_update: Update<u64> = buffer.as_slice().read_update().unwrap();
 
-            read_update == update
+            is_valid && read_update == update
         }
     }
 
@@ -699,6 +746,8 @@ mod tests {
         let source = vec!["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
         let target = vec!["X", "C", "D", "M", "F", "G", "H", "I", "P", "Q", "L"];
         let diff = Diff::compute(&source, &target).unwrap();
+
+        assert!(diff.validate_for_source_len(source.len()));
 
         let expected_diff = Diff {
             ops: vec![
@@ -753,6 +802,9 @@ mod tests {
         target[0] = 100_000_002;
 
         let diff = Diff::compute(&source, &target).unwrap();
+
+        assert!(diff.validate_for_source_len(source.len()));
+
         let computed_target = diff.update(&source).unwrap();
 
         assert_eq!(computed_target, target);
