@@ -140,10 +140,10 @@ impl<A: Clone> Diff<A> {
         for op in &self.ops {
             match op {
                 Op::Insert(values) => {
-                    target.extend(values.clone());
+                    target.extend_from_slice(values);
                 }
                 Op::Take(len) => {
-                    target.extend(source[index..index + len].to_vec());
+                    target.extend_from_slice(&source[index..index + len]);
                     index += len;
                     if index > source.len() {
                         return Err(error::ApplicationError::InvalidTake(index - len));
