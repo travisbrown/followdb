@@ -590,7 +590,7 @@ mod tests {
     };
     use crate::diff::DiffValues;
     use chrono::SubsecRound;
-    use quickcheck::{Arbitrary, quickcheck};
+    use quickcheck::Arbitrary;
     use rand::{rng, seq::SliceRandom};
     use std::collections::BTreeSet;
 
@@ -620,125 +620,138 @@ mod tests {
         }
     }
 
-    quickcheck! {
-        fn update_in_place_init(source: DistinctVec<u64>) -> bool {
-            let mut new_source = vec![];
-            let diff = Diff::init(source.0.clone());
+    #[quickcheck_macros::quickcheck]
+    fn update_in_place_init(source: DistinctVec<u64>) -> bool {
+        let mut new_source = vec![];
+        let diff = Diff::init(source.0.clone());
 
-            diff.update_in_place(&mut new_source).unwrap();
+        diff.update_in_place(&mut new_source).unwrap();
 
-            new_source == source.0
-        }
+        new_source == source.0
     }
 
-    quickcheck! {
-        fn is_identity(source: DistinctVec<u64>) -> bool {
-            let diff = Diff::compute(&source.0, &source.0).unwrap();
+    #[quickcheck_macros::quickcheck]
+    fn is_identity(source: DistinctVec<u64>) -> bool {
+        let diff = Diff::compute(&source.0, &source.0).unwrap();
 
-            diff.is_identity()
-        }
+        diff.is_identity()
     }
 
-    quickcheck! {
-        fn round_trip_distinct(source: DistinctVec<u64>, target: DistinctVec<u64>) -> bool {
-            let diff = Diff::compute(&source.0, &target.0).unwrap();
+    #[quickcheck_macros::quickcheck]
+    fn round_trip_distinct(source: DistinctVec<u64>, target: DistinctVec<u64>) -> bool {
+        let diff = Diff::compute(&source.0, &target.0).unwrap();
 
-            let is_valid = diff.validate();
+        let is_valid = diff.validate();
 
-            let len_change = diff.len_change;
-            let expected_len_change = target.0.len() as isize - source.0.len() as isize;
+        let len_change = diff.len_change;
+        let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
-            let computed_target = diff.update(&source.0).unwrap();
+        let computed_target = diff.update(&source.0).unwrap();
 
-            let mut source_copy = source.0.clone();
-            diff.update_in_place(&mut source_copy).unwrap();
+        let mut source_copy = source.0.clone();
+        diff.update_in_place(&mut source_copy).unwrap();
 
-            is_valid && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
-        }
+        is_valid
+            && computed_target == target.0
+            && source_copy == target.0
+            && len_change == expected_len_change
     }
 
-    quickcheck! {
-        fn round_trip_sorted_distinct(source: SortedDistinctVec<u64>, target: SortedDistinctVec<u64>) -> bool {
-            let diff = Diff::compute(&source.0, &target.0).unwrap();
+    #[quickcheck_macros::quickcheck]
+    fn round_trip_sorted_distinct(
+        source: SortedDistinctVec<u64>,
+        target: SortedDistinctVec<u64>,
+    ) -> bool {
+        let diff = Diff::compute(&source.0, &target.0).unwrap();
 
-            let is_valid = diff.validate();
+        let is_valid = diff.validate();
 
-            let len_change = diff.len_change;
-            let expected_len_change = target.0.len() as isize - source.0.len() as isize;
+        let len_change = diff.len_change;
+        let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
-            let computed_target = diff.update(&source.0).unwrap();
+        let computed_target = diff.update(&source.0).unwrap();
 
-            let mut source_copy = source.0.clone();
-            diff.update_in_place(&mut source_copy).unwrap();
+        let mut source_copy = source.0.clone();
+        diff.update_in_place(&mut source_copy).unwrap();
 
-            is_valid && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
-        }
+        is_valid
+            && computed_target == target.0
+            && source_copy == target.0
+            && len_change == expected_len_change
     }
 
-    quickcheck! {
-        fn round_trip_distinct_via_bytes(source: DistinctVec<u64>, target: DistinctVec<u64>) -> bool {
-            let diff = Diff::compute(&source.0, &target.0).unwrap();
+    #[quickcheck_macros::quickcheck]
+    fn round_trip_distinct_via_bytes(source: DistinctVec<u64>, target: DistinctVec<u64>) -> bool {
+        let diff = Diff::compute(&source.0, &target.0).unwrap();
 
-            let is_valid = diff.validate();
+        let is_valid = diff.validate();
 
-            let len_change = diff.len_change;
-            let expected_len_change = target.0.len() as isize - source.0.len() as isize;
+        let len_change = diff.len_change;
+        let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
-            let mut buffer = vec![];
-            buffer.write_diff(&diff).unwrap();
+        let mut buffer = vec![];
+        buffer.write_diff(&diff).unwrap();
 
-            let new_diff: Diff<u64> = buffer.as_slice().read_diff().unwrap();
-            let computed_target = new_diff.update(&source.0).unwrap();
+        let new_diff: Diff<u64> = buffer.as_slice().read_diff().unwrap();
+        let computed_target = new_diff.update(&source.0).unwrap();
 
-            let mut source_copy = source.0.clone();
-            new_diff.clone().update_in_place(&mut source_copy).unwrap();
+        let mut source_copy = source.0.clone();
+        new_diff.clone().update_in_place(&mut source_copy).unwrap();
 
-            is_valid && new_diff == diff && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
-        }
+        is_valid
+            && new_diff == diff
+            && computed_target == target.0
+            && source_copy == target.0
+            && len_change == expected_len_change
     }
 
-    quickcheck! {
-        fn round_trip_sorted_distinct_via_bytes(source: SortedDistinctVec<u64>, target: SortedDistinctVec<u64>) -> bool {
-            let diff = Diff::compute(&source.0, &target.0).unwrap();
+    #[quickcheck_macros::quickcheck]
+    fn round_trip_sorted_distinct_via_bytes(
+        source: SortedDistinctVec<u64>,
+        target: SortedDistinctVec<u64>,
+    ) -> bool {
+        let diff = Diff::compute(&source.0, &target.0).unwrap();
 
-            let is_valid = diff.validate();
+        let is_valid = diff.validate();
 
-            let len_change = diff.len_change;
-            let expected_len_change = target.0.len() as isize - source.0.len() as isize;
+        let len_change = diff.len_change;
+        let expected_len_change = target.0.len() as isize - source.0.len() as isize;
 
-            let mut buffer = vec![];
-            buffer.write_diff(&diff).unwrap();
+        let mut buffer = vec![];
+        buffer.write_diff(&diff).unwrap();
 
-            let new_diff: Diff<u64> = buffer.as_slice().read_diff().unwrap();
-            let computed_target = new_diff.update(&source.0).unwrap();
+        let new_diff: Diff<u64> = buffer.as_slice().read_diff().unwrap();
+        let computed_target = new_diff.update(&source.0).unwrap();
 
-            let mut source_copy = source.0.clone();
-            new_diff.clone().update_in_place(&mut source_copy).unwrap();
+        let mut source_copy = source.0.clone();
+        new_diff.clone().update_in_place(&mut source_copy).unwrap();
 
-            is_valid && new_diff == diff && computed_target == target.0 && source_copy == target.0 && len_change == expected_len_change
-        }
+        is_valid
+            && new_diff == diff
+            && computed_target == target.0
+            && source_copy == target.0
+            && len_change == expected_len_change
     }
 
-    quickcheck! {
-        fn round_trip_distinct_updates_via_bytes(
-            id: u64,
-            source: DistinctVec<u64>,
-            target: DistinctVec<u64>
-        ) -> bool {
-            let diff = Diff::compute(&source.0, &target.0).unwrap();
+    #[quickcheck_macros::quickcheck]
+    fn round_trip_distinct_updates_via_bytes(
+        id: u64,
+        source: DistinctVec<u64>,
+        target: DistinctVec<u64>,
+    ) -> bool {
+        let diff = Diff::compute(&source.0, &target.0).unwrap();
 
-            let is_valid = diff.validate();
+        let is_valid = diff.validate();
 
-            let timestamp = chrono::Utc::now().trunc_subsecs(0);
-            let update = Update::new(timestamp, id, diff);
+        let timestamp = chrono::Utc::now().trunc_subsecs(0);
+        let update = Update::new(timestamp, id, diff);
 
-            let mut buffer = vec![];
-            buffer.write_update(&update).unwrap();
+        let mut buffer = vec![];
+        buffer.write_update(&update).unwrap();
 
-            let read_update: Update<u64> = buffer.as_slice().read_update().unwrap();
+        let read_update: Update<u64> = buffer.as_slice().read_update().unwrap();
 
-            is_valid && read_update == update
-        }
+        is_valid && read_update == update
     }
 
     #[test]

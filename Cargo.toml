@@ -20,5 +20,6 @@ thiserror = "2"
 
 [dev-dependencies]
 quickcheck = "1"
+quickcheck_macros = "1"
 rand = "0.9"
 tempfile = "3"
