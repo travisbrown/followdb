@@ -10,16 +10,21 @@ pub enum ApplicationError {
     InvalidTake(usize),
     #[error("Invalid drop")]
     InvalidDrop(usize),
-    #[error("Unexpected data")]
-    UnexpectedData(usize),
+    #[error("Unexpected source")]
+    UnexpectedSource(usize),
+    #[error("Unexpected source length")]
+    UnexpectedSourceLen { expected: usize, actual: usize },
+    #[error("Unexpected target length")]
+    UnexpectedTargetLen { expected: isize },
 }
 
 impl ApplicationError {
     pub fn position(&self) -> usize {
         match self {
-            Self::InvalidTake(position) => *position,
-            Self::InvalidDrop(position) => *position,
-            Self::UnexpectedData(position) => *position,
+            Self::InvalidTake(position)
+            | Self::InvalidDrop(position)
+            | Self::UnexpectedSource(position) => *position,
+            Self::UnexpectedSourceLen { .. } | Self::UnexpectedTargetLen { .. } => 0,
         }
     }
 }

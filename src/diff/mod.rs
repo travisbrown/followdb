@@ -28,6 +28,15 @@ impl<A> Op<A> {
             Self::Insert(values) => !values.is_empty(),
         }
     }
+
+    pub fn same_type(&self, other: &Op<A>) -> bool {
+        matches!(
+            (self, other),
+            (Self::Take(_), Self::Take(_))
+                | (Self::Drop(_), Self::Drop(_))
+                | (Self::Insert(_), Self::Insert(_))
+        )
+    }
 }
 
 /// The operations necessary to transform one list of distinct elements into another.
@@ -38,10 +47,15 @@ impl<A> Op<A> {
 ///
 /// Note that there will be no operations if and only if both the source and target lists are
 /// empty.
+///
+/// There will never be two consecutive operations of the same type, and `len_change` should never
+/// be larger than `expected_source_len`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diff<A> {
     pub ops: Vec<Op<A>>,
+    pub expected_source_len: usize,
     pub len_change: isize,
+    /// Stored for convenience only.
     drop_count: usize,
 }
 
@@ -138,18 +152,87 @@ impl<A: Clone + Eq + Ord> Add<&DiffValues<A>> for &DiffValues<A> {
     }
 }
 
-impl<A: Clone> Diff<A> {
+impl<A> Diff<A> {
     pub fn init(values: Vec<A>) -> Self {
         let len = values.len();
         Self {
             ops: vec![Op::Insert(values)],
             len_change: len as isize,
+            expected_source_len: 0,
             drop_count: 0,
         }
     }
 
+    /// Determine whether this diff makes no changes (does not check validity).
+    pub fn is_identity(&self) -> bool {
+        match self.ops.len() {
+            1 => matches!(self.ops[0], Op::Take(_)),
+            0 => true,
+            _ => false,
+        }
+    }
+
+    /// Verify that the expected target length is non-negative, that all operations are valid, that
+    /// there are no two consecutive operations of the same type, and that the stored expected
+    /// source length and drop count matches the computed values.
+    pub fn validate(&self) -> bool {
+        self.expected_source_len as isize + self.len_change >= 0
+            && self.ops.first().is_none_or(|first| {
+                first.validate()
+                    && self
+                        .ops
+                        .windows(2)
+                        .all(|pair| pair[1].validate() && !pair[0].same_type(&pair[1]))
+            })
+            && {
+                let (computed_expected_source_len, computed_drop_count) =
+                    self.compute_expected_source_len_and_drop_count();
+
+                self.expected_source_len == computed_expected_source_len
+                    && self.drop_count == computed_drop_count
+            }
+    }
+
+    /// Determine the source length that is required for this diff to be valid.
+    fn compute_expected_source_len_and_drop_count(&self) -> (usize, usize) {
+        self.ops
+            .iter()
+            .map(|op| match op {
+                Op::Take(len) => (*len, 0),
+                Op::Drop(len) => (*len, 1),
+                Op::Insert(_) => (0, 0),
+            })
+            .fold((0, 0), |(e0, d0), (e1, d1)| (e0 + e1, d0 + d1))
+    }
+
+    pub fn prepared_update_target_len(
+        &self,
+        source_len: usize,
+    ) -> Result<usize, error::ApplicationError> {
+        if source_len != self.expected_source_len {
+            Err(error::ApplicationError::UnexpectedSourceLen {
+                expected: self.expected_source_len,
+                actual: source_len,
+            })
+        } else {
+            let expected_target_len = self.expected_source_len as isize + self.len_change;
+
+            usize::try_from(expected_target_len).map_err(|_| {
+                error::ApplicationError::UnexpectedTargetLen {
+                    expected: expected_target_len,
+                }
+            })
+        }
+    }
+}
+
+impl<A: Clone> Diff<A> {
+    /// Apply a diff to a source.
+    ///
+    /// This function should never panic, and it should never fail with an error unless the diff
+    /// is invalid or expects a different source length.
     pub fn update(&self, source: &[A]) -> Result<Vec<A>, error::ApplicationError> {
-        let target_len = (source.len() as isize + self.len_change) as usize;
+        let target_len = self.prepared_update_target_len(source.len())?;
         let mut target = Vec::with_capacity(target_len);
         let mut index = 0;
 
@@ -159,11 +242,12 @@ impl<A: Clone> Diff<A> {
                     target.extend_from_slice(values);
                 }
                 Op::Take(len) => {
+                    if index + len > source.len() {
+                        return Err(error::ApplicationError::InvalidTake(index));
+                    }
+
                     target.extend_from_slice(&source[index..index + len]);
                     index += len;
-                    if index > source.len() {
-                        return Err(error::ApplicationError::InvalidTake(index - len));
-                    }
                 }
                 Op::Drop(len) => {
                     index += len;
@@ -177,42 +261,8 @@ impl<A: Clone> Diff<A> {
         if index == source.len() {
             Ok(target)
         } else {
-            Err(error::ApplicationError::UnexpectedData(index))
+            Err(error::ApplicationError::UnexpectedSource(index))
         }
-    }
-}
-
-impl<A> Diff<A> {
-    /// Determine whether this diff makes no changes (does not check validity).
-    pub fn is_identity(&self) -> bool {
-        match self.ops.len() {
-            1 => matches!(self.ops[0], Op::Take(_)),
-            0 => true,
-            _ => false,
-        }
-    }
-
-    /// Verify that all operations are valid.
-    pub fn validate(&self) -> bool {
-        self.ops.iter().all(|op| op.validate())
-    }
-
-    /// Verify that all operations are valid and that the diff can be applied to a source of the
-    /// given length.
-    pub fn validate_for_source_len(&self, source_len: usize) -> bool {
-        self.validate() && self.expected_source_len() == source_len
-    }
-
-    /// Determine the source length that is required for this diff to be valid.
-    pub fn expected_source_len(&self) -> usize {
-        self.ops
-            .iter()
-            .map(|op| match op {
-                Op::Take(len) => *len,
-                Op::Drop(len) => *len,
-                Op::Insert(_) => 0,
-            })
-            .sum()
     }
 }
 
@@ -229,7 +279,13 @@ enum Action<A> {
 }
 
 impl<A: Clone + Default> Diff<A> {
+    /// Apply a diff to a source in place.
+    ///
+    /// This function should never panic, and it should never fail with an error unless the diff
+    /// is invalid or expects a different source length.
     pub fn update_in_place(self, source: &mut Vec<A>) -> Result<(), error::ApplicationError> {
+        let target_len = self.prepared_update_target_len(source.len())?;
+
         let mut actions = Vec::with_capacity(self.ops.len() - self.drop_count);
         let mut source_index = 0;
         let mut target_index = 0;
@@ -277,7 +333,11 @@ impl<A: Clone + Default> Diff<A> {
         }
 
         if source_index != source.len() {
-            Err(error::ApplicationError::UnexpectedData(source_index))
+            Err(error::ApplicationError::UnexpectedSource(source_index))
+        } else if target_index != target_len {
+            Err(error::ApplicationError::UnexpectedTargetLen {
+                expected: target_len as isize,
+            })
         } else {
             if source_index < target_index {
                 source.resize(target_index, Default::default());
@@ -312,7 +372,13 @@ impl<A: Clone + Default> Diff<A> {
 }
 
 impl<A: Clone + Eq + Ord> Diff<A> {
+    /// Computed the changes for a diff applied to a source.
+    ///
+    /// This function should never panic, and it should never fail with an error unless the diff
+    /// is invalid or expects a different source length.
     pub fn values(&self, source: &[A]) -> Result<DiffValues<A>, error::ApplicationError> {
+        let _target_len = self.prepared_update_target_len(source.len())?;
+
         let mut diff_values = DiffValues::default();
         let mut index = 0;
 
@@ -336,7 +402,7 @@ impl<A: Clone + Eq + Ord> Diff<A> {
         if index == source.len() {
             Ok(diff_values)
         } else {
-            Err(error::ApplicationError::UnexpectedData(index))
+            Err(error::ApplicationError::UnexpectedSource(index))
         }
     }
 
@@ -344,8 +410,9 @@ impl<A: Clone + Eq + Ord> Diff<A> {
         &self,
         source: &[A],
     ) -> Result<(Vec<A>, DiffValues<A>), error::ApplicationError> {
+        let target_len = self.prepared_update_target_len(source.len())?;
+
         let mut diff_values = DiffValues::default();
-        let target_len = (source.len() as isize + self.len_change) as usize;
         let mut target = Vec::with_capacity(target_len);
         let mut index = 0;
 
@@ -377,14 +444,15 @@ impl<A: Clone + Eq + Ord> Diff<A> {
         if index == source.len() {
             Ok((target, diff_values))
         } else {
-            Err(error::ApplicationError::UnexpectedData(index))
+            Err(error::ApplicationError::UnexpectedSource(index))
         }
     }
 
     pub fn compute(source: &[A], target: &[A]) -> Result<Self, error::InputError> {
         let mut ops = Vec::with_capacity(1);
-        let mut drop_count = 0;
+        let expected_source_len = source.len();
         let mut len_change: isize = 0;
+        let mut drop_count = 0;
 
         let mut source = source;
         let mut target = target;
@@ -453,6 +521,7 @@ impl<A: Clone + Eq + Ord> Diff<A> {
 
         Ok(Self {
             ops,
+            expected_source_len,
             len_change,
             drop_count,
         })
@@ -496,6 +565,8 @@ impl<A: Clone + Default + Eq + Ord> Diff<A> {
         self,
         source: &mut Vec<A>,
     ) -> Result<DiffValues<A>, error::ApplicationError> {
+        let target_len = self.prepared_update_target_len(source.len())?;
+
         let mut diff_values = DiffValues::default();
         let mut actions = Vec::with_capacity(self.ops.len() - self.drop_count);
         let mut source_index = 0;
@@ -548,7 +619,11 @@ impl<A: Clone + Default + Eq + Ord> Diff<A> {
         }
 
         if source_index != source.len() {
-            Err(error::ApplicationError::UnexpectedData(source_index))
+            Err(error::ApplicationError::UnexpectedSource(source_index))
+        } else if target_index != target_len {
+            Err(error::ApplicationError::UnexpectedTargetLen {
+                expected: target_len as isize,
+            })
         } else {
             if source_index < target_index {
                 source.resize(target_index, Default::default());
@@ -594,8 +669,94 @@ mod tests {
     use rand::{rng, seq::SliceRandom};
     use std::collections::BTreeSet;
 
+    impl<A: Arbitrary> Arbitrary for Op<A> {
+        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            match g.choose(&[-1, 0, 1]).unwrap() {
+                0 => {
+                    let mut values: Vec<A> = Arbitrary::arbitrary(g);
+
+                    if values.is_empty() {
+                        values.push(Arbitrary::arbitrary(g));
+                    }
+
+                    Self::Insert(values)
+                }
+                other => {
+                    let count: u8 = Arbitrary::arbitrary(g);
+                    let count = if count == 0 { 1 } else { count as usize };
+
+                    if *other == -1 {
+                        Self::Drop(count)
+                    } else {
+                        Self::Take(count)
+                    }
+                }
+            }
+        }
+    }
+
+    impl<A: Arbitrary + Clone> Arbitrary for Diff<A> {
+        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            let ops: Vec<Op<A>> = Arbitrary::arbitrary(g);
+            let mut clean_ops = vec![];
+            let mut expected_source_len = 0;
+            let mut len_change = 0;
+            let mut drop_count = 0;
+
+            for op in ops {
+                match &op {
+                    Op::Take(count) => {
+                        expected_source_len += count;
+                    }
+                    Op::Drop(count) => {
+                        expected_source_len += count;
+                        len_change -= *count as isize;
+                        drop_count += 1;
+                    }
+                    Op::Insert(values) => {
+                        len_change += values.len() as isize;
+                    }
+                }
+
+                match clean_ops.last_mut() {
+                    Some(last) => match (last, &op) {
+                        (Op::Take(last_count), Op::Take(this_count)) => {
+                            *last_count += this_count;
+                        }
+                        (Op::Drop(last_count), Op::Drop(this_count)) => {
+                            *last_count += this_count;
+                            drop_count -= 1;
+                        }
+                        (Op::Insert(last_values), Op::Insert(this_values)) => {
+                            last_values.extend_from_slice(this_values);
+                        }
+                        (_, _) => {
+                            clean_ops.push(op);
+                        }
+                    },
+                    None => {
+                        clean_ops.push(op);
+                    }
+                }
+            }
+
+            Self {
+                ops: clean_ops,
+                expected_source_len,
+                len_change,
+                drop_count,
+            }
+        }
+    }
+
     #[derive(Clone, Debug, Eq, PartialEq)]
-    struct DistinctVec<A>(Vec<A>);
+    pub struct DistinctVec<A>(Vec<A>);
+
+    impl<A> AsRef<[A]> for DistinctVec<A> {
+        fn as_ref(&self) -> &[A] {
+            &self.0
+        }
+    }
 
     impl<A: Arbitrary + Clone + Eq + Ord + 'static> Arbitrary for DistinctVec<A> {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
@@ -608,7 +769,13 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
-    struct SortedDistinctVec<A>(Vec<A>);
+    pub struct SortedDistinctVec<A>(Vec<A>);
+
+    impl<A> AsRef<[A]> for SortedDistinctVec<A> {
+        fn as_ref(&self) -> &[A] {
+            &self.0
+        }
+    }
 
     impl<A: Arbitrary + Clone + Ord + Ord + 'static> Arbitrary for SortedDistinctVec<A> {
         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
@@ -621,39 +788,56 @@ mod tests {
     }
 
     #[quickcheck_macros::quickcheck]
+    fn update(source: DistinctVec<u8>, diff: Diff<u8>) -> bool {
+        diff.validate() && {
+            let result = diff.update(source.as_ref());
+
+            if diff.expected_source_len == source.as_ref().len() {
+                source.as_ref().len() as isize + diff.len_change == result.unwrap().len() as isize
+            } else {
+                matches!(
+                    result,
+                    Err(
+                        super::error::ApplicationError::UnexpectedSourceLen { expected, actual },
+                    ) if expected == diff.expected_source_len && actual == source.as_ref().len()
+                )
+            }
+        }
+    }
+
+    #[quickcheck_macros::quickcheck]
     fn update_in_place_init(source: DistinctVec<u64>) -> bool {
         let mut new_source = vec![];
-        let diff = Diff::init(source.0.clone());
+        let diff = Diff::init(source.as_ref().to_vec());
 
         diff.update_in_place(&mut new_source).unwrap();
 
-        new_source == source.0
+        new_source == source.as_ref()
     }
 
     #[quickcheck_macros::quickcheck]
     fn is_identity(source: DistinctVec<u64>) -> bool {
-        let diff = Diff::compute(&source.0, &source.0).unwrap();
+        let diff = Diff::compute(source.as_ref(), source.as_ref()).unwrap();
 
         diff.is_identity()
     }
 
     #[quickcheck_macros::quickcheck]
     fn round_trip_distinct(source: DistinctVec<u64>, target: DistinctVec<u64>) -> bool {
-        let diff = Diff::compute(&source.0, &target.0).unwrap();
-
-        let is_valid = diff.validate();
+        let diff = Diff::compute(source.as_ref(), target.as_ref()).unwrap();
+        let is_valid = diff.validate() && diff.expected_source_len == source.as_ref().len();
 
         let len_change = diff.len_change;
-        let expected_len_change = target.0.len() as isize - source.0.len() as isize;
+        let expected_len_change = target.as_ref().len() as isize - source.as_ref().len() as isize;
 
-        let computed_target = diff.update(&source.0).unwrap();
+        let computed_target = diff.update(source.as_ref()).unwrap();
 
-        let mut source_copy = source.0.clone();
+        let mut source_copy = source.as_ref().to_vec();
         diff.update_in_place(&mut source_copy).unwrap();
 
         is_valid
-            && computed_target == target.0
-            && source_copy == target.0
+            && computed_target == target.as_ref()
+            && source_copy == target.as_ref()
             && len_change == expected_len_change
     }
 
@@ -662,46 +846,44 @@ mod tests {
         source: SortedDistinctVec<u64>,
         target: SortedDistinctVec<u64>,
     ) -> bool {
-        let diff = Diff::compute(&source.0, &target.0).unwrap();
-
-        let is_valid = diff.validate();
+        let diff = Diff::compute(source.as_ref(), target.as_ref()).unwrap();
+        let is_valid = diff.validate() && diff.expected_source_len == source.as_ref().len();
 
         let len_change = diff.len_change;
-        let expected_len_change = target.0.len() as isize - source.0.len() as isize;
+        let expected_len_change = target.as_ref().len() as isize - source.as_ref().len() as isize;
 
-        let computed_target = diff.update(&source.0).unwrap();
+        let computed_target = diff.update(source.as_ref()).unwrap();
 
-        let mut source_copy = source.0.clone();
+        let mut source_copy = source.as_ref().to_vec();
         diff.update_in_place(&mut source_copy).unwrap();
 
         is_valid
-            && computed_target == target.0
-            && source_copy == target.0
+            && computed_target == target.as_ref()
+            && source_copy == target.as_ref()
             && len_change == expected_len_change
     }
 
     #[quickcheck_macros::quickcheck]
     fn round_trip_distinct_via_bytes(source: DistinctVec<u64>, target: DistinctVec<u64>) -> bool {
-        let diff = Diff::compute(&source.0, &target.0).unwrap();
-
-        let is_valid = diff.validate();
+        let diff = Diff::compute(source.as_ref(), target.as_ref()).unwrap();
+        let is_valid = diff.validate() && diff.expected_source_len == source.as_ref().len();
 
         let len_change = diff.len_change;
-        let expected_len_change = target.0.len() as isize - source.0.len() as isize;
+        let expected_len_change = target.as_ref().len() as isize - source.as_ref().len() as isize;
 
         let mut buffer = vec![];
         buffer.write_diff(&diff).unwrap();
 
         let new_diff: Diff<u64> = buffer.as_slice().read_diff().unwrap();
-        let computed_target = new_diff.update(&source.0).unwrap();
+        let computed_target = new_diff.update(source.as_ref()).unwrap();
 
-        let mut source_copy = source.0.clone();
+        let mut source_copy = source.as_ref().to_vec();
         new_diff.clone().update_in_place(&mut source_copy).unwrap();
 
         is_valid
             && new_diff == diff
-            && computed_target == target.0
-            && source_copy == target.0
+            && computed_target == target.as_ref()
+            && source_copy == target.as_ref()
             && len_change == expected_len_change
     }
 
@@ -710,26 +892,25 @@ mod tests {
         source: SortedDistinctVec<u64>,
         target: SortedDistinctVec<u64>,
     ) -> bool {
-        let diff = Diff::compute(&source.0, &target.0).unwrap();
-
-        let is_valid = diff.validate();
+        let diff = Diff::compute(source.as_ref(), target.as_ref()).unwrap();
+        let is_valid = diff.validate() && diff.expected_source_len == source.as_ref().len();
 
         let len_change = diff.len_change;
-        let expected_len_change = target.0.len() as isize - source.0.len() as isize;
+        let expected_len_change = target.as_ref().len() as isize - source.as_ref().len() as isize;
 
         let mut buffer = vec![];
         buffer.write_diff(&diff).unwrap();
 
         let new_diff: Diff<u64> = buffer.as_slice().read_diff().unwrap();
-        let computed_target = new_diff.update(&source.0).unwrap();
+        let computed_target = new_diff.update(source.as_ref()).unwrap();
 
-        let mut source_copy = source.0.clone();
+        let mut source_copy = source.as_ref().to_vec();
         new_diff.clone().update_in_place(&mut source_copy).unwrap();
 
         is_valid
             && new_diff == diff
-            && computed_target == target.0
-            && source_copy == target.0
+            && computed_target == target.as_ref()
+            && source_copy == target.as_ref()
             && len_change == expected_len_change
     }
 
@@ -739,9 +920,8 @@ mod tests {
         source: DistinctVec<u64>,
         target: DistinctVec<u64>,
     ) -> bool {
-        let diff = Diff::compute(&source.0, &target.0).unwrap();
-
-        let is_valid = diff.validate();
+        let diff = Diff::compute(source.as_ref(), target.as_ref()).unwrap();
+        let is_valid = diff.validate() && diff.expected_source_len == source.as_ref().len();
 
         let timestamp = chrono::Utc::now().trunc_subsecs(0);
         let update = Update::new(timestamp, id, diff);
@@ -760,7 +940,8 @@ mod tests {
         let target = vec!["X", "C", "D", "M", "F", "G", "H", "I", "P", "Q", "L"];
         let diff = Diff::compute(&source, &target).unwrap();
 
-        assert!(diff.validate_for_source_len(source.len()));
+        assert!(diff.validate());
+        assert_eq!(diff.expected_source_len, source.len());
 
         let expected_diff = Diff {
             ops: vec![
@@ -774,9 +955,11 @@ mod tests {
                 Op::Insert(vec!["P", "Q"]),
                 Op::Take(1),
             ],
-            drop_count: 3,
+            expected_source_len: source.len(),
             len_change: -1,
+            drop_count: 3,
         };
+
         assert_eq!(diff, expected_diff);
 
         let expected_diff_values = DiffValues {
@@ -816,7 +999,8 @@ mod tests {
 
         let diff = Diff::compute(&source, &target).unwrap();
 
-        assert!(diff.validate_for_source_len(source.len()));
+        assert!(diff.validate());
+        assert_eq!(diff.expected_source_len, source.len());
 
         let computed_target = diff.update(&source).unwrap();
 

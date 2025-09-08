@@ -48,8 +48,9 @@ pub trait ReadExt: Read + VarIntReader {
         let count = self.read_u32::<BigEndian>().map_err(DecodingError::Count)?;
 
         let mut ops = Vec::with_capacity(count as usize);
-        let mut drop_count = 0;
+        let mut expected_source_len = 0;
         let mut len_change = 0;
+        let mut drop_count = 0;
 
         for _ in 0..count {
             let next = self.read_i32::<BigEndian>().map_err(DecodingError::Value)?;
@@ -57,11 +58,13 @@ pub trait ReadExt: Read + VarIntReader {
             match next.cmp(&0) {
                 Ordering::Greater => {
                     ops.push(super::Op::Take(next as usize));
+                    expected_source_len += next as usize;
                 }
                 Ordering::Less => {
                     ops.push(super::Op::Drop((-next) as usize));
-                    drop_count += 1;
+                    expected_source_len += (-next) as usize;
                     len_change += next as isize;
+                    drop_count += 1;
                 }
                 Ordering::Equal => {
                     let insert_count = self
@@ -82,6 +85,7 @@ pub trait ReadExt: Read + VarIntReader {
 
         Ok(super::Diff {
             ops,
+            expected_source_len,
             len_change,
             drop_count,
         })
