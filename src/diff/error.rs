@@ -19,7 +19,8 @@ pub enum ApplicationError {
 }
 
 impl ApplicationError {
-    pub fn position(&self) -> usize {
+    #[must_use]
+    pub const fn position(&self) -> usize {
         match self {
             Self::InvalidTake(position)
             | Self::InvalidDrop(position)

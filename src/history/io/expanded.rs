@@ -40,7 +40,7 @@ pub fn read_expanded<A: std::str::FromStr + Ord, P: AsRef<Path>>(
             result.map_or_else(
                 |error| Some(Err(error)),
                 |(path, id, timestamp)| {
-                    if included_ids.map(|ids| ids.contains(&id)).unwrap_or(true) {
+                    if included_ids.is_none_or(|ids| ids.contains(&id)) {
                         std::fs::File::open(path)
                             .map_err(super::Error::from)
                             .and_then(|file| {
@@ -70,10 +70,10 @@ pub fn read_expanded<A: std::str::FromStr + Ord, P: AsRef<Path>>(
 
     for (id, (timestamp, values)) in files {
         let entry: &mut Vec<_> = result.entry(id).or_default();
-        entry.push(Snapshot::new(timestamp, values))
+        entry.push(Snapshot::new(timestamp, values));
     }
 
-    for (_, values) in result.iter_mut() {
+    for values in result.values_mut() {
         values.sort();
     }
 
@@ -93,7 +93,7 @@ pub fn write_expanded<A: Copy + std::fmt::Display, P: AsRef<Path>>(
             )))?);
 
             for id in ids {
-                writeln!(writer, "{}", id)?;
+                writeln!(writer, "{id}")?;
             }
         }
     }

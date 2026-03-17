@@ -32,7 +32,8 @@ pub struct Snapshot<A> {
 }
 
 impl<A> Snapshot<A> {
-    pub fn new(timestamp: DateTime<Utc>, ids: Vec<A>) -> Self {
+    #[must_use]
+    pub const fn new(timestamp: DateTime<Utc>, ids: Vec<A>) -> Self {
         Self { timestamp, ids }
     }
 }
@@ -41,7 +42,8 @@ impl<A> Snapshot<A> {
 pub struct History<A>(BTreeMap<A, Vec<Snapshot<A>>>);
 
 impl<A> History<A> {
-    pub fn new(values: BTreeMap<A, Vec<Snapshot<A>>>) -> Self {
+    #[must_use]
+    pub const fn new(values: BTreeMap<A, Vec<Snapshot<A>>>) -> Self {
         Self(values)
     }
 }
@@ -100,6 +102,7 @@ impl<A: Copy + Eq + Ord> History<A> {
             .flatten()
     }
 
+    #[must_use]
     pub fn changes(&self) -> Vec<Change<A>> {
         let mut changes: Vec<Change<A>> = self
             .0

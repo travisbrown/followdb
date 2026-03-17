@@ -66,7 +66,7 @@ pub fn write_compact<P: AsRef<Path>>(
     let mut writer = BufWriter::new(File::create(output)?);
 
     for (_, _, line) in lines {
-        writeln!(writer, "{}", line)?;
+        writeln!(writer, "{line}")?;
     }
 
     Ok(())

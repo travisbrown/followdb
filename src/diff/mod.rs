@@ -22,14 +22,16 @@ impl<A> Op<A> {
     /// Verify that the value is "non-empty".
     ///
     /// If false, then either a take or drop value is zero, or an insert sequence is empty.
-    pub fn validate(&self) -> bool {
+    #[must_use]
+    pub const fn validate(&self) -> bool {
         match self {
             Self::Take(value) | Self::Drop(value) => *value != 0,
             Self::Insert(values) => !values.is_empty(),
         }
     }
 
-    pub fn same_type(&self, other: &Op<A>) -> bool {
+    #[must_use]
+    pub const fn same_type(&self, other: &Self) -> bool {
         matches!(
             (self, other),
             (Self::Take(_), Self::Take(_))
@@ -80,7 +82,7 @@ impl<A: Ord> PartialOrd for Update<A> {
 }
 
 impl<A> Update<A> {
-    pub fn new(timestamp: DateTime<Utc>, id: A, diff: Diff<A>) -> Self {
+    pub const fn new(timestamp: DateTime<Utc>, id: A, diff: Diff<A>) -> Self {
         Self {
             timestamp,
             id,
@@ -102,6 +104,7 @@ impl Update<u64> {
     /// Convenience method for getting a sequence of bytes for an update.
     ///
     /// Uses big-endian encoding for the ID and timestamp (in seconds).
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(12);
 
@@ -128,14 +131,17 @@ impl<A: Eq> Default for DiffValues<A> {
 }
 
 impl<A: Eq + Ord> DiffValues<A> {
+    #[must_use]
     pub fn moved(&self) -> BTreeSet<&A> {
         self.additions.intersection(&self.removals).collect()
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.additions.len() + self.removals.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.additions.is_empty() && self.removals.is_empty()
     }
@@ -153,6 +159,7 @@ impl<A: Clone + Eq + Ord> Add<&DiffValues<A>> for &DiffValues<A> {
 }
 
 impl<A> Diff<A> {
+    #[must_use]
     pub fn init(values: Vec<A>) -> Self {
         let len = values.len();
         Self {
@@ -164,6 +171,7 @@ impl<A> Diff<A> {
     }
 
     /// Determine whether this diff makes no changes (does not check validity).
+    #[must_use]
     pub fn is_identity(&self) -> bool {
         match self.ops.len() {
             1 => matches!(self.ops[0], Op::Take(_)),
@@ -175,6 +183,7 @@ impl<A> Diff<A> {
     /// Verify that the expected target length is non-negative, that all operations are valid, that
     /// there are no two consecutive operations of the same type, and that the stored expected
     /// source length and drop count matches the computed values.
+    #[must_use]
     pub fn validate(&self) -> bool {
         self.expected_source_len as isize + self.len_change >= 0
             && self.ops.first().is_none_or(|first| {
@@ -209,18 +218,18 @@ impl<A> Diff<A> {
         &self,
         source_len: usize,
     ) -> Result<usize, error::ApplicationError> {
-        if source_len != self.expected_source_len {
-            Err(error::ApplicationError::UnexpectedSourceLen {
-                expected: self.expected_source_len,
-                actual: source_len,
-            })
-        } else {
+        if source_len == self.expected_source_len {
             let expected_target_len = self.expected_source_len as isize + self.len_change;
 
             usize::try_from(expected_target_len).map_err(|_| {
                 error::ApplicationError::UnexpectedTargetLen {
                     expected: expected_target_len,
                 }
+            })
+        } else {
+            Err(error::ApplicationError::UnexpectedSourceLen {
+                expected: self.expected_source_len,
+                actual: source_len,
             })
         }
     }
@@ -483,8 +492,8 @@ impl<A: Clone + Eq + Ord> Diff<A> {
 
         let lis = lis::LisExt::longest_increasing_subsequence_by(
             &source_matches,
-            |a, b| a.cmp(b),
-            |value| value.is_some(),
+            std::cmp::Ord::cmp,
+            std::option::Option::is_some,
         );
 
         let mut lis_remaining = lis.as_slice();
@@ -532,7 +541,7 @@ impl<A: Clone + Eq + Ord> Diff<A> {
             if let Some(Op::Take(old_len)) = ops.last_mut() {
                 *old_len += len;
             } else {
-                ops.push(Op::Take(len))
+                ops.push(Op::Take(len));
             }
         }
     }
@@ -552,6 +561,8 @@ impl<A: Clone + Eq + Ord> Diff<A> {
         let y_len = y.len();
         let mut i = 0;
 
+        // Clippy is wrong: we're walking from the end for both arrays.
+        #[allow(clippy::suspicious_operation_groupings)]
         while x_len > i && y_len > i && x[x_len - i - 1] == y[y_len - i - 1] {
             i += 1;
         }
