@@ -161,7 +161,7 @@ impl<A: Clone + Eq + Ord> Add<&DiffValues<A>> for &DiffValues<A> {
     fn add(self, rhs: &DiffValues<A>) -> Self::Output {
         DiffValues {
             additions: self.additions.union(&rhs.additions).cloned().collect(),
-            removals: self.additions.union(&rhs.removals).cloned().collect(),
+            removals: self.removals.union(&rhs.removals).cloned().collect(),
         }
     }
 }
@@ -1123,6 +1123,38 @@ mod tests {
         let computed_target = diff.update(&source).unwrap();
 
         assert_eq!(computed_target, target);
+    }
+
+    #[test]
+    fn test_diff_values_add() {
+        let lhs = DiffValues {
+            additions: BTreeSet::from([1u32, 2]),
+            removals: BTreeSet::from([3, 4]),
+        };
+        let rhs = DiffValues {
+            additions: BTreeSet::from([5u32, 6]),
+            removals: BTreeSet::from([7, 8]),
+        };
+
+        let combined = &lhs + &rhs;
+
+        assert_eq!(combined.additions, BTreeSet::from([1, 2, 5, 6]));
+        assert_eq!(combined.removals, BTreeSet::from([3, 4, 7, 8]));
+
+        // Overlapping values: shared entries should deduplicate.
+        let a = DiffValues {
+            additions: BTreeSet::from([1u32, 2, 3]),
+            removals: BTreeSet::from([10, 11]),
+        };
+        let b = DiffValues {
+            additions: BTreeSet::from([2u32, 3, 4]),
+            removals: BTreeSet::from([11, 12]),
+        };
+
+        let combined = &a + &b;
+
+        assert_eq!(combined.additions, BTreeSet::from([1, 2, 3, 4]));
+        assert_eq!(combined.removals, BTreeSet::from([10, 11, 12]));
     }
 
     #[test]
