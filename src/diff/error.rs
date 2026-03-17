@@ -7,20 +7,20 @@ pub enum InputError {
 #[derive(Debug, thiserror::Error)]
 pub enum ApplicationError {
     #[error("Invalid take")]
-    InvalidTake(usize),
+    InvalidTake(u64),
     #[error("Invalid drop")]
-    InvalidDrop(usize),
+    InvalidDrop(u64),
     #[error("Unexpected source")]
-    UnexpectedSource(usize),
+    UnexpectedSource(u64),
     #[error("Unexpected source length")]
-    UnexpectedSourceLen { expected: usize, actual: usize },
+    UnexpectedSourceLen { expected: u64, actual: u64 },
     #[error("Unexpected target length")]
-    UnexpectedTargetLen { expected: isize },
+    UnexpectedTargetLen { expected: i64 },
 }
 
 impl ApplicationError {
     #[must_use]
-    pub const fn position(&self) -> usize {
+    pub const fn position(&self) -> u64 {
         match self {
             Self::InvalidTake(position)
             | Self::InvalidDrop(position)
