@@ -29,6 +29,11 @@ pub trait ReadExt: Read + VarIntReader {
     /// Read the binary representation of an update.
     ///
     /// Note that this function fixes the ID to `u64`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`DecodingError`] if the timestamp, identifier, or diff cannot be read or
+    /// decoded.
     fn read_update(&mut self) -> Result<super::Update<u64>, DecodingError> {
         let timestamp = self
             .read_u32::<BigEndian>()
@@ -44,6 +49,11 @@ pub trait ReadExt: Read + VarIntReader {
         Ok(super::Update::new(timestamp, id, diff))
     }
 
+    /// Read the binary representation of a diff.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`DecodingError`] if the operation count or operation values cannot be read.
     fn read_diff<A: VarInt>(&mut self) -> Result<super::Diff<A>, DecodingError> {
         let count = self.read_u32::<BigEndian>().map_err(DecodingError::Count)?;
 

@@ -7,6 +7,12 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::sync::LazyLock;
 
+/// Read a history from a directory of expanded text files.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be read, any file name is invalid, a file cannot be
+/// opened or parsed, or any identifier value cannot be parsed from a line.
 pub fn read_expanded<A: std::str::FromStr + Ord, P: AsRef<Path>>(
     input: P,
     included_ids: Option<&BTreeSet<A>>,
@@ -80,6 +86,11 @@ pub fn read_expanded<A: std::str::FromStr + Ord, P: AsRef<Path>>(
     Ok(History::new(result))
 }
 
+/// Write a history to a directory of expanded text files.
+///
+/// # Errors
+///
+/// Returns an error if any output file cannot be created or written.
 pub fn write_expanded<A: Copy + std::fmt::Display, P: AsRef<Path>>(
     history: &History<A>,
     output: P,

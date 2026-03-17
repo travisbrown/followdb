@@ -6,6 +6,17 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Cursor, Write};
 use std::path::Path;
 
+/// Read a history from a compact binary file.
+///
+/// # Panics
+///
+/// Panics if an internal map invariant is violated (an occupied entry has no snapshots), which
+/// should never occur in practice.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be opened or read, if any update cannot be decoded, or
+/// if a diff cannot be applied to reconstruct a snapshot.
 pub fn read_compact<P: AsRef<Path>>(input: P) -> Result<History<u64>, super::Error> {
     let mut result = BTreeMap::new();
     let mut buffer = vec![];
@@ -46,6 +57,11 @@ pub fn read_compact<P: AsRef<Path>>(input: P) -> Result<History<u64>, super::Err
     Ok(History::new(result))
 }
 
+/// Write a history to a compact binary file.
+///
+/// # Errors
+///
+/// Returns an error if any update cannot be encoded or if the output file cannot be written.
 pub fn write_compact<P: AsRef<Path>>(
     history: &History<u64>,
     output: P,

@@ -67,6 +67,11 @@ impl<A: Copy> History<A> {
 }
 
 impl<A: Copy + Eq + Ord> History<A> {
+    /// Iterate over all updates in the history, yielding the previous timestamp and each update.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant of `windows(2)` is violated, which should never occur.
     pub fn updates(
         &self,
     ) -> impl Iterator<Item = Result<(Option<DateTime<Utc>>, Update<A>), crate::diff::error::InputError>>

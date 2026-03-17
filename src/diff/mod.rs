@@ -95,6 +95,10 @@ impl Update<u64> {
     /// Convenience method for reading an update from a byte sequence.
     ///
     /// Uses big-endian encoding for the ID and timestamp (in seconds).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`error::DecodingError`] if the bytes cannot be decoded as a valid update.
     pub fn from_bytes<B: AsRef<[u8]>>(input: B) -> Result<Self, error::DecodingError> {
         let mut cursor = Cursor::new(input);
 
@@ -104,6 +108,10 @@ impl Update<u64> {
     /// Convenience method for getting a sequence of bytes for an update.
     ///
     /// Uses big-endian encoding for the ID and timestamp (in seconds).
+    ///
+    /// # Panics
+    ///
+    /// Panics if writing to the internal buffer fails, which should never occur in practice.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(12);
@@ -240,6 +248,11 @@ impl<A: Clone> Diff<A> {
     ///
     /// This function should never panic, and it should never fail with an error unless the diff
     /// is invalid or expects a different source length.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`error::ApplicationError`] if the source length does not match, or if a
+    /// `Take` or `Drop` operation extends beyond the source bounds.
     pub fn update(&self, source: &[A]) -> Result<Vec<A>, error::ApplicationError> {
         let target_len = self.prepared_update_target_len(source.len())?;
         let mut target = Vec::with_capacity(target_len);
@@ -292,6 +305,11 @@ impl<A: Clone + Default> Diff<A> {
     ///
     /// This function should never panic, and it should never fail with an error unless the diff
     /// is invalid or expects a different source length.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`error::ApplicationError`] if the source length does not match, or if a
+    /// `Take` or `Drop` operation extends beyond the source bounds.
     pub fn update_in_place(self, source: &mut Vec<A>) -> Result<(), error::ApplicationError> {
         let target_len = self.prepared_update_target_len(source.len())?;
 
@@ -381,10 +399,15 @@ impl<A: Clone + Default> Diff<A> {
 }
 
 impl<A: Clone + Eq + Ord> Diff<A> {
-    /// Computed the changes for a diff applied to a source.
+    /// Compute the changed values for a diff applied to a source.
     ///
     /// This function should never panic, and it should never fail with an error unless the diff
     /// is invalid or expects a different source length.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`error::ApplicationError`] if the source length does not match, or if a
+    /// `Drop` operation extends beyond the source bounds.
     pub fn values(&self, source: &[A]) -> Result<DiffValues<A>, error::ApplicationError> {
         let _target_len = self.prepared_update_target_len(source.len())?;
 
@@ -415,6 +438,12 @@ impl<A: Clone + Eq + Ord> Diff<A> {
         }
     }
 
+    /// Apply a diff to a source, returning the new list and the changed values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`error::ApplicationError`] if the source length does not match, or if a
+    /// `Take` or `Drop` operation extends beyond the source bounds.
     pub fn update_with_values(
         &self,
         source: &[A],
@@ -457,6 +486,16 @@ impl<A: Clone + Eq + Ord> Diff<A> {
         }
     }
 
+    /// Compute the minimal diff needed to transform `source` into `target`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal longest increasing subsequence invariant is violated (should never
+    /// occur in practice).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`error::InputError::DuplicateValue`] if `target` contains duplicate elements.
     pub fn compute(source: &[A], target: &[A]) -> Result<Self, error::InputError> {
         let mut ops = Vec::with_capacity(1);
         let expected_source_len = source.len();
@@ -572,6 +611,12 @@ impl<A: Clone + Eq + Ord> Diff<A> {
 }
 
 impl<A: Clone + Default + Eq + Ord> Diff<A> {
+    /// Apply a diff to a source in place, returning the changed values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`error::ApplicationError`] if the source length does not match, or if a
+    /// `Take` or `Drop` operation extends beyond the source bounds.
     pub fn update_in_place_with_values(
         self,
         source: &mut Vec<A>,
